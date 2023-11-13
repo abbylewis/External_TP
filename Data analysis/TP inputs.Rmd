@@ -20,6 +20,7 @@ library(ggspatial)
 library(ggpubr)
 source("sen_slope_custom.R")
 source("map trends and vals.R")
+source("monthly_correlations.R")
 
 with_temp <- read.csv("../Compiled data/All_data_annual AF.csv")
 ```
@@ -43,7 +44,11 @@ wi_tp_withID <- wi_lake_tp_conc %>%
   mutate(TP_flux_kg_d = (TP_flux/1000000)*area_km2*1000000, #mg/m2/d --> g/d
          Volume_L = (SurfaceArea_ha*10000 * MeanDepth_m)*1000,
          TP_flux_ug_L_d = (TP_flux_kg_d*1000*1000*1000) / Volume_L)
+```
 
+
+Map summary stats for inputs
+```{r}
 summary_stats = wi_tp_withID %>%
   pivot_longer(c(TP_flux, TP_conc, TP_flux_kg_d, TP_flux_ug_L_d)) %>%
   group_by(LakeID, name) %>%
@@ -107,17 +112,27 @@ ggarrange(us_map_flux_pct, us_map_conc_pct)
 dev.off()
 ```
 
-Map in-lake trends
+
+Map in-lake trends and compare to inputs
 ```{r}
 summer_hypo_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(TP_ugL_HYPO)), "TP_ugL_HYPO")
 summer_epi_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(TP_ugL_EPI)), "TP_ugL_EPI")
 hypo_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(strat_TP_ugL_HYPO)), "strat_TP_ugL_HYPO")
 epi_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(strat_TP_ugL_EPI)), "strat_TP_ugL_EPI")
+epi_chla_sen <- sen_slope_custom(with_temp %>% filter(!is.na(Chla_ugL_EPI)), "Chla_ugL_EPI")
+hypo_do_sen <- sen_slope_custom(with_temp %>% 
+                                  filter(!is.na(DO_mgL_HYPO),
+                                         !is.na(DO_mgL_HYPO), 
+                                         DO_mgL_HYPO>1), 
+                                "DO_mgL_HYPO")
+af_sen <- sen_slope_custom(with_temp %>% filter(!is.na(AF)), "AF")
 
 us_map_hypo_tp <- map_trend(summer_hypo_tp_sen %>% filter(!is.na(trend)), "Hypo. TP (µg/L/y)")
 us_map_epi_tp <- map_trend(summer_epi_tp_sen %>% filter(!is.na(trend)), "Epi. TP (µg/L/y)")
 us_map_hypo_tp_strat <- map_trend(hypo_tp_sen %>% filter(!is.na(trend)), "Hypo. TP (µg/L/y)")
 us_map_epi_tp_strat <- map_trend(epi_tp_sen %>% filter(!is.na(trend)), "Epi. TP (µg/L/y)")
+us_map_epi_chla <- map_trend(epi_tp_sen %>% filter(!is.na(trend)), "Epi. chl-a (µg/L/y)")
+us_map_af <- map_trend(af_sen %>% filter(!is.na(trend)), "AF (d)")
 
 tp_input_trend_flux %>%
   mutate(var = "TP_flux_area") %>%
@@ -130,9 +145,45 @@ tp_input_trend_flux %>%
          !is.na(TP_flux_area)) %>%
   ggplot(aes(x = TP_flux_area, y = EPI_TP)) +
   geom_point()
+
+# A quick note: I decided it wasn't relevant enough to include here, but we do see a correlation between epi. TP and epi. chl-a trends
+
+wi_lakes_all_data <- with_temp %>%
+  filter(LakeID %in% wi_tp_withID$LakeID) %>%
+  mutate(date = ymd_hms(paste(Year,"-01-01 00:00:00")))
+
+wi_tp_trend <- wi_tp_withID %>%
+  rename(date = sample_dt)
+
+all_trends <- tp_input_trend_conc %>%
+  mutate(var = "TP_conc") %>%
+  full_join(tp_input_trend_flux %>% mutate(var = "TP_flux")) %>%
+  full_join(epi_tp_sen %>% mutate(var = "TP_ugL_EPI")) %>%
+  full_join(hypo_tp_sen %>% mutate(var = "TP_ugL_HYPO")) %>%
+  full_join(hypo_do_sen %>% mutate(var = "DO_mgL_HYPO")) %>%
+  full_join(af_sen %>% mutate(var = "AF")) %>%
+  full_join(epi_chla_sen %>% mutate(var = "Chla_ugL_EPI"))
+
+jpeg("../Figures/All_trends.jpeg", width = 6, height = 6, units = "in", res = 300)
+all_trends %>%
+  dplyr::select(LakeID, var, trend) %>%
+  pivot_wider(names_from = var, values_from = trend) %>%
+  pivot_longer(c(TP_flux, TP_conc), names_to = "input_var", values_to = "input_val") %>%
+  pivot_longer(c(TP_ugL_EPI, TP_ugL_HYPO, Chla_ugL_EPI, DO_mgL_HYPO, AF), names_to = "lake_var", values_to = "lake_val") %>%
+  filter(!is.na(input_val),
+         !is.na(lake_val)) %>%
+  ggplot(aes(x = input_val, y = lake_val))+
+  geom_point()+
+  ylab("Trend (in-lake variable)")+
+  xlab("Trend (input)")+
+  facet_grid(rows = vars(lake_var), cols = vars(input_var), scales = "free")
+dev.off()
 ```
 
+
+Plot correlation between in-lake and input concentrations (i.e., not trends)
 ```{r}
+#Calculate summary stats
 in_lake_sum = with_temp %>%
   group_by(LakeID) %>%
   summarize(median_EPI = median(TP_ugL_EPI, na.rm = T), 
@@ -146,12 +197,13 @@ summary_stats = wi_tp_withID %>%
   summarize(mean = mean(value, na.rm = T),
             median = median(value, na.rm = T))
 
+#EPI
 summary_stats %>%
   left_join(in_lake_sum) %>%
-  mutate(name = ifelse(name == "TP_conc", "TP conc\n(mg/L)",
-                       ifelse(name == "TP_flux", "TP flux area\n(mg/m2/d)",
-                              ifelse(name == "TP_flux_kg_d", "TP flux mass\n(kg/d)",
-                                     ifelse(name == "TP_flux_ug_L_d", "TP flux vol\n(%/decade)", name))))) %>%
+  mutate(name = ifelse(name == "TP_conc", "TP conc\n(mg/L)", name),
+         name = ifelse(name == "TP_flux", "TP flux area\n(mg/m2/d)", name),
+         name = ifelse(name == "TP_flux_kg_d", "TP flux mass\n(kg/d)", name),
+         name = ifelse(name == "TP_flux_ug_L_d", "TP flux vol\n(%/decade)", name)) %>%
   ggplot(aes(x = mean, y = mean_EPI)) +
   geom_point() +
   scale_x_log10()+
@@ -159,33 +211,14 @@ summary_stats %>%
   geom_smooth(method = "lm") + 
   stat_cor()
 
+#HYPO
 summary_stats %>%
   left_join(in_lake_sum) %>%
-  mutate(name = ifelse(name == "TP_conc", "TP conc\n(mg/L)",
-                       ifelse(name == "TP_flux", "TP flux area\n(mg/m2/d)",
-                              ifelse(name == "TP_flux_kg_d", "TP flux mass\n(kg/d)",
-                                     ifelse(name == "TP_flux_ug_L_d", "TP flux vol\n(%/decade)", name))))) %>%
+  mutate(name = ifelse(name == "TP_conc", "TP conc\n(mg/L)", name),
+         name = ifelse(name == "TP_flux", "TP flux area\n(mg/m2/d)", name),
+         name = ifelse(name == "TP_flux_kg_d", "TP flux mass\n(kg/d)", name),
+         name = ifelse(name == "TP_flux_ug_L_d", "TP flux vol\n(%/decade)", name)) %>%
   ggplot(aes(x = mean, y = mean_HYPO)) +
-  geom_point() +
-  scale_x_log10()+
-  facet_wrap(~name, scales = "free_x") +
-  geom_smooth(method = "lm") + 
-  stat_cor()
-
-summary_stats = wi_tp_withID %>%
-  pivot_longer(c(TP_flux, TP_conc, TP_flux_kg_d, TP_flux_ug_L_d)) %>%
-  mutate(Year = year(sample_dt)) %>%
-  group_by(LakeID, name) %>%
-  summarize(mean = mean(value, na.rm = T),
-            median = median(value, na.rm = T))
-
-summary_stats %>%
-  left_join(in_lake_sum) %>%
-  mutate(name = ifelse(name == "TP_conc", "TP conc\n(mg/L)",
-                       ifelse(name == "TP_flux", "TP flux area\n(mg/m2/d)",
-                              ifelse(name == "TP_flux_kg_d", "TP flux mass\n(kg/d)",
-                                     ifelse(name == "TP_flux_ug_L_d", "TP flux vol\n(%/decade)", name))))) %>%
-  ggplot(aes(x = mean, y = mean_EPI)) +
   geom_point() +
   scale_x_log10()+
   facet_wrap(~name, scales = "free_x") +
@@ -193,7 +226,9 @@ summary_stats %>%
   stat_cor()
 ```
 
+
 Monthly inputs correlation
+On average no evidence for an effect of any month of TP input on WI lake concentrations
 ```{r}
 monthly_tp <- wi_tp_withID %>%
   mutate(mon = month(sample_dt),
@@ -206,55 +241,6 @@ monthly_tp <- wi_tp_withID %>%
 wi_lakes_all_data <- with_temp %>%
   filter(LakeID %in% monthly_tp$LakeID) %>%
   full_join(monthly_tp)
-
-# DO
-monthly_correlations <- function(variable, value, wi_lakes_all_data) {
-  #Parse variable name
-  variable <- sym(variable)
-  value <- sym(value)
-  
-  many_lake_stat <- wi_lakes_all_data %>%
-    filter(!is.na(!!variable), !is.na(mon), !is.na(!!value))%>%
-    group_by(LakeID, mon)%>%
-    mutate(nyear = length(unique(Year)))%>%
-    filter(nyear>=10,
-           #max(value)-min(value)>2
-           )%>%
-    dplyr::summarize(monthly_correlation = ppcor::pcor.test(!!variable, !!value, 
-                                                    Year, method = "spearman")$estimate,
-              )
-  
-  labs = c("N:     Sep\nS:     Mar","Oct\nApr","Nov\nMay","Dec\nJun","Jan\nJul",
-           "Feb\nAug","Mar\nSep","Apr\nOct","May\nNov","Jun\nDec","Jul\nJan","Aug\nFeb")
-  
-  anova_res <- aov(monthly_correlation~as.factor(mon),
-                   data=many_lake_stat)
-  length(unique(many_lake_stat$LakeID))
-  tukey <- TukeyHSD(anova_res)
-  cld <- multcompView::multcompLetters4(anova_res,tukey)$`as.factor(mon)`$Letters
-  cld_df <- data.frame(cld = cld, mon = names(cld))%>%
-    mutate(mon = factor(as.numeric(mon), levels = c(9:12,1:8), labels = labs))
-  wilcox <- many_lake_stat%>%
-    group_by(mon)%>%
-    mutate(p = wilcox.test(monthly_correlation)$p.value,
-           n = n(),
-           mon = factor(mon, levels = c(9:12,1:8),labels = labs))
-  fig <- wilcox %>%
-    ggplot(aes(x=mon, y = monthly_correlation))+
-    geom_boxplot(aes(color=p<0.05))+
-    geom_text(aes(x = mon, label = cld, y = 1.08),
-              data = cld_df)+
-    #geom_text(aes(label = paste0("n = ",n), y = max(do_temp)))+ #n is the same across all
-    geom_hline(yintercept=0)+
-    ylim(-1,1.08)+
-    xlab("TP input month")+
-    ylab(paste0("Correlation with\n",variable,"\n(n = ",unique(wilcox$n),")"))+
-    theme_bw()+
-    scale_color_manual(values = c("grey50","#FB8B24"))+
-    theme(axis.text.x = element_text(hjust = ifelse(
-      levels(wilcox$mon) == "N:     Sep\nS:     Mar", .8, .5)))
-  return(fig)
-}
 
 monthly_correlations("TP_ugL_EPI", "TP_flux_sum", wi_lakes_all_data)
 monthly_correlations("strat_TP_ugL_EPI", "TP_flux_sum", wi_lakes_all_data)
@@ -271,7 +257,7 @@ monthly_correlations("strat_TP_ugL_HYPO", "TP_conc", wi_lakes_all_data)
 monthly_correlations("Chla_ugL_EPI", "TP_conc", wi_lakes_all_data)
 ```
 
-Annual correlations
+Within-lake correlation plots
 ```{r}
 annual_tp <- wi_tp_withID %>%
   mutate(mon = month(sample_dt),
@@ -346,50 +332,6 @@ wi_lakes_annual %>%
 dev.off()
 ```
 
-Do trends correspond?
-```{r}
-wi_lakes_all_data <- with_temp %>%
-  filter(LakeID %in% wi_tp_withID$LakeID) %>%
-  mutate(date = ymd_hms(paste(Year,"-01-01 00:00:00")))
-
-wi_tp_trend <- wi_tp_withID %>%
-  rename(date = sample_dt)
-
-tp_input_trend_flux <- sen_slope_custom(wi_tp_trend, "TP_flux")
-tp_input_trend_conc <- sen_slope_custom(wi_tp_trend, "TP_conc")
-epi_tp_trend <- sen_slope_custom(wi_lakes_all_data %>% filter(!is.na(TP_ugL_EPI)), "TP_ugL_EPI")
-hypo_tp_trend <- sen_slope_custom(wi_lakes_all_data %>% filter(!is.na(TP_ugL_HYPO)), "TP_ugL_HYPO")
-hypo_do_trend <- sen_slope_custom(wi_lakes_all_data %>% 
-                                    filter(!is.na(DO_mgL_HYPO), DO_mgL_HYPO>1), 
-                                  "DO_mgL_HYPO")
-af_trend <- sen_slope_custom(wi_lakes_all_data %>% filter(!is.na(AF), AF > 0), "AF")
-epi_chla_trend <- sen_slope_custom(wi_lakes_all_data %>% filter(!is.na(Chla_ugL_EPI)), "Chla_ugL_EPI")
-
-all_trends <- tp_input_trend_conc %>%
-  mutate(var = "TP_conc") %>%
-  full_join(tp_input_trend_flux %>% mutate(var = "TP_flux")) %>%
-  full_join(epi_tp_trend %>% mutate(var = "TP_ugL_EPI")) %>%
-  full_join(hypo_tp_trend %>% mutate(var = "TP_ugL_HYPO")) %>%
-  full_join(hypo_do_trend %>% mutate(var = "DO_mgL_HYPO")) %>%
-  full_join(af_trend %>% mutate(var = "AF")) %>%
-  full_join(epi_chla_trend %>% mutate(var = "Chla_ugL_EPI"))
-
-jpeg("../Figures/All_trends.jpeg", width = 6, height = 6, units = "in", res = 300)
-all_trends %>%
-  dplyr::select(LakeID, var, trend) %>%
-  pivot_wider(names_from = var, values_from = trend) %>%
-  pivot_longer(c(TP_flux, TP_conc), names_to = "input_var", values_to = "input_val") %>%
-  pivot_longer(c(TP_ugL_EPI, TP_ugL_HYPO, Chla_ugL_EPI, DO_mgL_HYPO, AF), names_to = "lake_var", values_to = "lake_val") %>%
-  ggplot(aes(x = input_val, y = lake_val))+
-  geom_point()+
-  ylab("Trend (in-lake variable)")+
-  xlab("Trend (input)")+
-  facet_grid(rows = vars(lake_var), cols = vars(input_var), scales = "free")
-dev.off()
-
-lat_long %>%
-  filter(LakeID == "WI-523120"|LakeID=="114"|LakeID=="116")
-```
 Regressions
 ```{r}
 cummean.na <- function(x, na.rm = T) {
@@ -419,8 +361,8 @@ with_lags <- with_temp%>%
          spring_precip = (precip_mar +precip_apr)/2,
          winter_precip = (precip_jan +precip_feb)/2,
          anoxic = max(DO_mgL_HYPO,na.rm = T)<1,
-         lag_is_last_year = ifelse(lag(Year)==(Year-1),T,F))%>%
-  filter(lag_is_last_year)
+         lag_is_last_year = ifelse(lag(Year) == (Year-1), T, F))%>%
+  mutate(across(contains("_lag"), function(x) ifelse(lag_is_last_year, x, NA)))
 
 # Save this as the dataset we will work with
 dataset <- with_lags
@@ -469,11 +411,11 @@ potential_drivers <- c("TP_ugL_HYPO",
                       "TP_flux"
                       )
 aic_calculator_lmer(data_log_nuts,responses,potential_drivers, interaction = "+")
-selected_drivers <- c("hypo_p_lag","epi_p_lag","TP_flux")
+selected_drivers <- c("hypo_p_lag","TP_flux")
 std_data <- standardize_data(data_log_nuts,responses,selected_drivers)
 all_lakes_epiP <- mod_by_lake(data_log_nuts,responses,selected_drivers, interaction = "+")
-mod_lmer <- lmer(strat_TP_ugL_EPI~hypo_p_lag+epi_p_lag+TP_flux+(1|LakeID), data = std_data)
-#vif(mod_lmer)
+mod_lmer <- lmer(strat_TP_ugL_EPI~hypo_p_lag+TP_flux+(1|LakeID), data = std_data)
+vif(mod_lmer)
 epi_p <- plot_effects_lmer(mod_lmer,"Epilimnetic TP (µg/L)", poster = F) 
 epi_p_ridge <- plot_effects_by_lake_lmer_ridge(all_lakes_epiP,"Epilimnetic TP (µg/L)",mod_lmer, poster = F)
 
@@ -490,10 +432,10 @@ potential_drivers <- c("strat_TP_ugL_EPI",
                       "TP_flux"
                       )
 aic_calculator_lmer(data_log_nuts,responses,potential_drivers, interaction = "+")
-selected_drivers <- c("TP_flux","AF")
+selected_drivers <- c("TP_flux")
 std_data <-standardize_data(data_log_nuts,responses,selected_drivers)
 all_lakes_hypoP_af <- mod_by_lake(data_log_nuts,responses,selected_drivers, interaction = "+")
-mod_lmer <- lmer(TP_ugL_HYPO~TP_flux+AF+(1|LakeID), data = std_data)
+mod_lmer <- lmer(TP_ugL_HYPO~TP_flux+(1|LakeID), data = std_data)
 vif(mod_lmer)
 hypo_p_af <- plot_effects_lmer(mod_lmer,"Hypolimnetic TP (µg/L)", poster = F) 
 hypo_p_ridge_af <- plot_effects_by_lake_lmer_ridge(all_lakes_hypoP_af,"Hypolimnetic TP (µg/L)",mod_lmer, poster = F)
@@ -504,120 +446,4 @@ lakes = data_log_nuts%>%
   group_by(LakeID)%>%
   filter(length(unique(Year))>=10)
 lakes_using = unique(lakes$LakeID)
-
-aic_calculator_lm(data_log_nuts %>% filter(LakeID == "114"),responses,potential_drivers, interaction = "+")
-aic_calculator_lm(data_log_nuts %>% filter(LakeID == "27"),responses,potential_drivers, interaction = "+")
-aic_calculator_lm(data_log_nuts %>% filter(LakeID == "29"),responses,potential_drivers, interaction = "+")
-aic_calculator_lm(data_log_nuts %>% filter(LakeID == "30"),responses,potential_drivers, interaction = "+")
-aic_calculator_lm(data_log_nuts %>% filter(LakeID == "33"),responses,potential_drivers, interaction = "+")
-aic_calculator_lm(data_log_nuts %>% filter(LakeID == "35"),responses,potential_drivers, interaction = "+")
 ```
-
-Monthly trends
-```{r}
-sen_slope_months <- function(df, var, months = 1:12) {
-  output <- sen_slope_custom(df%>%filter(Month == months[1]), var)%>%
-    mutate(Month = months[1])
-  
-  if(length(months)>1){
-    for (month in months[2:length(months)]) {
-      output <- rbind(output, 
-                      sen_slope_custom(df%>%filter(Month == month), var)%>%
-                        mutate(Month = month)
-    )
-    }
-  }
-  
-  # Save output only if all months were run
-  if(length(months)==12){
-    write.csv(output, paste0("../Compiled data/", 
-                             deparse(substitute(df)), "_",
-                             deparse(substitute(var)), ".csv"), 
-              row.names = F)
-  }
-  
-  return(output)
-}
-
-wi_tp_trend <- wi_tp_withID %>%
-  rename(date = sample_dt)%>%
-  mutate(Month = month(date))
-
-#tp_input_trend_flux <- sen_slope_months(wi_tp_trend, "TP_flux")
-tp_input_trend_flux <- read.csv('../Compiled data/wi_tp_trend_"TP_flux".csv')
-
-all_trends <- tp_input_trend_flux%>%
-  mutate(Month = factor(Month, 
-                        levels = unique(Month), 
-                        labels = month.abb[unique(Month)],
-                        ordered = T))
-min = min(all_trends$trend)*10
-max = max(all_trends$trend)*10
-abs_max = max(abs(c(min,max)))
-
-for_states <- all_trends%>%
-  left_join(lat_long)
-states <- ne_states(returnclass = "sf",country = "United States of America")
-
-us_map_flux_monthly = ggplot(data = states) +
-  geom_sf(fill = "white") +
-  coord_sf(expand = FALSE, ylim = c(42, 47.5), xlim = c(-93,-86.5))+
-  geom_point(data = for_states, 
-             aes(Longitude_DD, Latitude_DD, fill = trend*10),
-             shape = 21, color = "grey50", size = 2, alpha  =.5, stroke = .4)+
-  theme_bw()+
-  scale_fill_gradientn(name = "TP flux trend",
-                       colours = c("blue","white","red"),
-                       limits = c(-abs_max, abs_max))+
-  theme(axis.title.x = element_blank(),
-        axis.title.y = element_blank(),
-        axis.text = element_blank(),
-        axis.ticks = element_blank(),
-        plot.margin = margin(0, 0, 0, 0, "cm"),
-        panel.background = element_rect(fill = "grey80"),
-        legend.position = "bottom")+
-  facet_grid(cols = vars(Month))
-
-
-us_map_flux_monthly
-
-#tp_input_trend_conc <- sen_slope_months(wi_tp_trend, "TP_conc")
-tp_input_trend_conc <- read.csv('../Compiled data/wi_tp_trend_"TP_conc".csv')
-
-all_trends <- tp_input_trend_conc%>%
-  mutate(Month = factor(Month, 
-                        levels = unique(Month), 
-                        labels = month.abb[unique(Month)],
-                        ordered = T))
-min = min(all_trends$trend)*10
-max = max(all_trends$trend)*10
-abs_max = max(abs(c(min,max)))
-
-for_states <- all_trends%>%
-  left_join(lat_long)
-states <- ne_states(returnclass = "sf",country = "United States of America")
-
-us_map_conc_monthly = ggplot(data = states) +
-  geom_sf(fill = "white") +
-  coord_sf(expand = FALSE, ylim = c(42, 47.5), xlim = c(-93,-86.5))+
-  geom_point(data = for_states, 
-             aes(Longitude_DD, Latitude_DD, fill = trend*10),
-             shape = 21, color = "grey50", size = 2, alpha  =.5, stroke = .4)+
-  theme_bw()+
-  scale_fill_gradientn(name = "TP conc. trend",
-                       colours = c("blue","white","red"),
-                       limits = c(-abs_max, abs_max))+
-  theme(axis.title.x = element_blank(),
-        axis.title.y = element_blank(),
-        axis.text = element_blank(),
-        axis.ticks = element_blank(),
-        plot.margin = margin(0, 0, 0, 0, "cm"),
-        panel.background = element_rect(fill = "grey80"),
-        legend.position = "bottom")+
-  facet_grid(cols = vars(Month))
-
-
-ggarrange(us_map_flux_monthly, us_map_conc_monthly, nrow = 2)
-```
-
-

@@ -1,0 +1,154 @@
+---
+title: "Monthly input trends"
+author: "Abby Lewis"
+date: "2023-11-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(viridis)
+library(lubridate)
+library(ggthemes)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+#remotes::install_github("ropensci/rnaturalearthhires")
+library(rnaturalearthhires)
+library(ggspatial)
+library(ggpubr)
+source("sen_slope_custom.R")
+source("map trends and vals.R")
+source("monthly_correlations.R")
+
+with_temp <- read.csv("../Compiled data/All_data_annual AF.csv")
+```
+
+Load TP input data
+```{r}
+wi_lake_tp_conc <- readxl::read_excel("../External data/WI lakes TP.xlsx", sheet = 1) %>%
+  pivot_longer(-sample_dt, names_to = "id", values_to = "TP_conc")
+wi_lake_tp_flux <- readxl::read_excel("../External data/WI lakes TP.xlsx", sheet = 2) %>%
+  pivot_longer(-sample_dt, names_to = "id", values_to = "TP_flux")
+wi_lake_ids <- read.csv("../External data/WI_lake47.txt", sep = "\t")
+wi_lake_areas <- read.csv("../External data/static_attributes.csv")
+
+wi_tp_withID <- wi_lake_tp_conc %>%
+  full_join(wi_lake_tp_flux) %>%
+  left_join(wi_lake_ids, by = c("id")) %>%
+  rename(hylak_id = basin_id) %>%
+  left_join(wi_lake_areas %>% dplyr::select(basin, area_km2), by = c("hylak_id" = "basin"))  %>%
+  left_join(lat_long) %>%
+  filter(sample_dt > as.POSIXct("1981-01-01")) %>%
+  mutate(TP_flux_kg_d = (TP_flux/1000000)*area_km2*1000000, #mg/m2/d --> g/d
+         Volume_L = (SurfaceArea_ha*10000 * MeanDepth_m)*1000,
+         TP_flux_ug_L_d = (TP_flux_kg_d*1000*1000*1000) / Volume_L)
+```
+
+Monthly trends
+```{r}
+sen_slope_months <- function(df, var, months = 1:12) {
+  output <- sen_slope_custom(df%>%filter(Month == months[1]), var)%>%
+    mutate(Month = months[1])
+  
+  if(length(months)>1){
+    for (month in months[2:length(months)]) {
+      output <- rbind(output, 
+                      sen_slope_custom(df%>%filter(Month == month), var)%>%
+                        mutate(Month = month)
+    )
+    }
+  }
+  
+  # Save output only if all months were run
+  if(length(months)==12){
+    write.csv(output, paste0("../Compiled data/", 
+                             deparse(substitute(df)), "_",
+                             deparse(substitute(var)), ".csv"), 
+              row.names = F)
+  }
+  
+  return(output)
+}
+
+wi_tp_trend <- wi_tp_withID %>%
+  rename(date = sample_dt)%>%
+  mutate(Month = month(date), 
+         Year = year(date))
+
+#tp_input_trend_flux <- sen_slope_months(wi_tp_trend, "TP_flux") #Takes a bit to run
+tp_input_trend_flux <- read.csv('../Compiled data/wi_tp_trend_"TP_flux".csv')
+
+all_trends <- tp_input_trend_flux%>%
+  mutate(Month = factor(Month, 
+                        levels = unique(Month), 
+                        labels = month.abb[unique(Month)],
+                        ordered = T))
+min = min(all_trends$trend)*10
+max = max(all_trends$trend)*10
+abs_max = max(abs(c(min,max)))
+
+for_states <- all_trends%>%
+  left_join(lat_long)
+states <- ne_states(returnclass = "sf",country = "United States of America")
+
+us_map_flux_monthly = ggplot(data = states) +
+  geom_sf(fill = "white") +
+  coord_sf(expand = FALSE, ylim = c(42, 47.5), xlim = c(-93,-86.5))+
+  geom_point(data = for_states, 
+             aes(Longitude_DD, Latitude_DD, fill = trend*10),
+             shape = 21, color = "grey50", size = 2, alpha  =.5, stroke = .4)+
+  theme_bw()+
+  scale_fill_gradientn(name = "TP flux trend",
+                       colours = c("blue","white","red"),
+                       limits = c(-abs_max, abs_max))+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"),
+        panel.background = element_rect(fill = "grey80"),
+        legend.position = "bottom")+
+  facet_grid(cols = vars(Month))
+
+
+us_map_flux_monthly
+
+#tp_input_trend_conc <- sen_slope_months(wi_tp_trend, "TP_conc")
+tp_input_trend_conc <- read.csv('../Compiled data/wi_tp_trend_"TP_conc".csv')
+
+all_trends <- tp_input_trend_conc%>%
+  mutate(Month = factor(Month, 
+                        levels = unique(Month), 
+                        labels = month.abb[unique(Month)],
+                        ordered = T))
+min = min(all_trends$trend)*10
+max = max(all_trends$trend)*10
+abs_max = max(abs(c(min,max)))
+
+for_states <- all_trends%>%
+  left_join(lat_long)
+states <- ne_states(returnclass = "sf",country = "United States of America")
+
+us_map_conc_monthly = ggplot(data = states) +
+  geom_sf(fill = "white") +
+  coord_sf(expand = FALSE, ylim = c(42, 47.5), xlim = c(-93,-86.5))+
+  geom_point(data = for_states, 
+             aes(Longitude_DD, Latitude_DD, fill = trend*10),
+             shape = 21, color = "grey50", size = 2, alpha  =.5, stroke = .4)+
+  theme_bw()+
+  scale_fill_gradientn(name = "TP conc. trend",
+                       colours = c("blue","white","red"),
+                       limits = c(-abs_max, abs_max))+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"),
+        panel.background = element_rect(fill = "grey80"),
+        legend.position = "bottom")+
+  facet_grid(cols = vars(Month))
+
+ggarrange(us_map_flux_monthly, us_map_conc_monthly, nrow = 2)
+```

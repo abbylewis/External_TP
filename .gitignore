@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+Figures/
+Compiled data/Stratified_period_data_with_thermo.csv
+External data/era5_precip.nc
+External data/era5.nc
+External data/HydroLAKES_points_v10_shp/

@@ -5,6 +5,7 @@ date: "2022-09-21"
 output: html_document
 ---
 
+Load packages and lake data
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
@@ -23,7 +24,10 @@ source("map trends and vals.R")
 source("monthly_correlations.R")
 
 with_temp <- read.csv("../Compiled data/All_data_annual AF.csv")
+lat_long <- read.csv("https://pasta.lternet.edu/package/data/eml/edi/1530/1/fadd3eaa25b5fdd1fc4efba70e660579")
+
 ```
+
 
 Load TP input data
 ```{r}
@@ -73,6 +77,7 @@ dev.off()
 
 
 Calculate trends and map
+Take home: inputs are decreasing
 ```{r}
 wi_tp_trend <- wi_tp_withID %>%
   rename(Date = sample_dt) %>%
@@ -83,6 +88,41 @@ wi_tp_trend <- wi_tp_withID %>%
             TP_flux_kg_d = mean(TP_flux_kg_d, na.rm = T),
             TP_flux_ug_L_d = mean(TP_flux_ug_L_d, na.rm = T)) %>%
   mutate(date = as.Date(paste0(Year, "-01-01")))
+
+jpeg("../Figures/TP_input_patterns.jpeg", width = 6, height = 4, units = "in", res = 300)
+wi_tp_trend %>%
+  group_by(LakeID) %>%
+  mutate(z_score = (TP_flux - mean(TP_flux, na.rm = T))/sd(TP_flux, na.rm = T)) %>%
+  ggplot(aes(x = Year, y = z_score))+
+  geom_line(aes(group = LakeID))+
+  theme(legend.position = "none")+
+  geom_smooth() +
+  ylab("Z-score of TP input at each lake")+
+  xlab("Year")+
+  theme_bw()
+dev.off()
+
+jpeg("../Figures/TP_conc_patterns.jpeg", width = 6, height = 4, units = "in", res = 300)
+with_temp %>%
+  group_by(LakeID) %>%
+  filter(StateOrProvince == "Wisconsin",
+         Year >= 1990) %>%
+  mutate(z_score = (TP_ugL_SURF - mean(TP_ugL_SURF, na.rm = T))/sd(TP_ugL_SURF, na.rm = T)) %>%
+  ggplot(aes(x = Year, y = z_score))+
+  geom_line(aes(group = LakeID))+
+  theme(legend.position = "none")+
+  geom_smooth() +
+  ylab("Z-score of TP concentration at each lake")+
+  xlab("Year")+
+  theme_bw()
+dev.off()
+
+epi_tp_years <- with_temp %>%
+  filter(!is.na(TP_ugL_EPI)) %>%
+  group_by(LakeID) %>%
+  summarize(min_year = min(Year),
+            max_year = max(Year))
+
 tp_input_trend_flux <- sen_slope_custom(wi_tp_trend, "TP_flux")
 tp_input_trend_flux_kg_d <- sen_slope_custom(wi_tp_trend, "TP_flux_kg_d")
 tp_input_trend_flux_ug_Ld <- sen_slope_custom(wi_tp_trend, "TP_flux_ug_L_d")
@@ -97,15 +137,63 @@ jpeg("../Figures/TP_input_trends.jpeg", width = 6, height = 4, units = "in", res
 ggarrange(us_map_flux, us_map_conc, us_map_flux_kg_d, us_map_flux_ug_L_d)
 dev.off()
 
-all_trends <- tp_input_trend_flux %>% mutate(name = "TP_flux") %>%
+#Make a flux dataset constrained to the years of in-lake data availability
+input_limited_epi_tp <- wi_tp_trend %>%
+  left_join(epi_tp_years) %>%
+  filter(Year >= min_year & Year <= max_year)
+
+tp_input_trend_flux_limited <- sen_slope_custom(input_limited_epi_tp, "TP_flux")
+tp_input_trend_flux_kg_d_limited <- sen_slope_custom(input_limited_epi_tp, "TP_flux_kg_d")
+tp_input_trend_flux_ug_Ld_limited <- sen_slope_custom(input_limited_epi_tp, "TP_flux_ug_L_d")
+tp_input_trend_conc_limited <- sen_slope_custom(input_limited_epi_tp, "TP_conc")
+
+input_limited_epi_tp %>%
+  ggplot()+
+  geom_density(aes(x = min_year)) +
+  geom_density(aes(x = max_year))
+
+#Make a flux dataset constrained to 2000 - 2020
+input_limited_epi_tp_years <- wi_tp_trend %>%
+  filter(Year >= 2000 & Year <= 2020)
+
+tp_input_trend_flux_limited_years <- sen_slope_custom(input_limited_epi_tp_years, "TP_flux")
+tp_input_trend_flux_kg_d_limited_years <- sen_slope_custom(input_limited_epi_tp_years, "TP_flux_kg_d")
+tp_input_trend_flux_ug_Ld_limited_years <- sen_slope_custom(input_limited_epi_tp_years, "TP_flux_ug_L_d")
+tp_input_trend_conc_limited_years <- sen_slope_custom(input_limited_epi_tp_years, "TP_conc")
+
+summary_stats2 <- wi_tp_trend %>%
+  left_join(epi_tp_years) %>%
+  filter(Year >= min_year & Year <= max_year) %>%
+  pivot_longer(c(TP_flux, TP_conc, TP_flux_kg_d, TP_flux_ug_L_d)) %>%
+  mutate(name = paste0(name, "_limited")) %>%
+  group_by(LakeID, name) %>%
+  summarize(mean = mean(value, na.rm = T),
+            median = median(value, na.rm = T))
+
+summary_stats3 <- wi_tp_trend %>%
+  left_join(epi_tp_years) %>%
+  filter(Year >= 2000 & Year <= 2020) %>%
+  pivot_longer(c(TP_flux, TP_conc, TP_flux_kg_d, TP_flux_ug_L_d)) %>%
+  mutate(name = paste0(name, "_limited_years")) %>%
+  group_by(LakeID, name) %>%
+  summarize(mean = mean(value, na.rm = T),
+            median = median(value, na.rm = T))
+
+all_trends_pct <- tp_input_trend_flux %>% mutate(name = "TP_flux") %>%
   full_join(tp_input_trend_conc %>% mutate(name = "TP_conc")) %>%
   full_join(tp_input_trend_flux_kg_d %>% mutate(name = "TP_flux_kg_d")) %>%
   full_join(tp_input_trend_flux_ug_Ld %>% mutate(name = "TP_flux_ug_L_d")) %>%
-  left_join(summary_stats) %>%
+  full_join(tp_input_trend_conc_limited %>% mutate(name = "TP_conc_limited")) %>%
+  full_join(tp_input_trend_flux_limited %>% mutate(name = "TP_flux_limited")) %>%
+  full_join(tp_input_trend_conc_limited_years %>% mutate(name = "TP_conc_limited_years")) %>%
+  full_join(tp_input_trend_flux_limited_years %>% mutate(name = "TP_flux_limited_years")) %>%
+  left_join(summary_stats %>%
+              full_join(summary_stats2) %>%
+              full_join(summary_stats3)) %>%
   mutate(trend = trend / mean * 100)
 
-us_map_flux_pct <- map_trend(all_trends %>% filter(name == "TP_flux"), "TP flux\n(%/decade)")
-us_map_conc_pct <- map_trend(all_trends %>% filter(name == "TP_conc"), "TP conc\n(%/decade)")
+us_map_flux_pct <- map_trend(all_trends_pct %>% filter(name == "TP_flux"), "TP flux trend\n(%/decade)")
+us_map_conc_pct <- map_trend(all_trends_pct %>% filter(name == "TP_conc"), "TP conc. trend\n(%/decade)")
 
 jpeg("../Figures/TP_input_trends_pct.jpeg", width = 6, height = 4, units = "in", res = 300)
 ggarrange(us_map_flux_pct, us_map_conc_pct)
@@ -117,13 +205,15 @@ Map in-lake trends and compare to inputs
 ```{r}
 summer_hypo_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(TP_ugL_HYPO)), "TP_ugL_HYPO")
 summer_epi_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(TP_ugL_EPI)), "TP_ugL_EPI")
+surf_epi_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(TP_ugL_SURF)), "TP_ugL_SURF")
 hypo_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(strat_TP_ugL_HYPO)), "strat_TP_ugL_HYPO")
 epi_tp_sen <- sen_slope_custom(with_temp %>% filter(!is.na(strat_TP_ugL_EPI)), "strat_TP_ugL_EPI")
 epi_chla_sen <- sen_slope_custom(with_temp %>% filter(!is.na(Chla_ugL_EPI)), "Chla_ugL_EPI")
 hypo_do_sen <- sen_slope_custom(with_temp %>% 
-                                  filter(!is.na(DO_mgL_HYPO),
-                                         !is.na(DO_mgL_HYPO), 
-                                         DO_mgL_HYPO>1), 
+                                  filter(!is.na(DO_mgL_HYPO)) %>%
+                                  group_by(LakeID) %>%
+                                  filter(mean(DO_mgL_HYPO) > 1) %>%
+                                  ungroup(), 
                                 "DO_mgL_HYPO")
 af_sen <- sen_slope_custom(with_temp %>% filter(!is.na(AF)), "AF")
 
@@ -131,10 +221,12 @@ us_map_hypo_tp <- map_trend(summer_hypo_tp_sen %>% filter(!is.na(trend)), "Hypo.
 us_map_epi_tp <- map_trend(summer_epi_tp_sen %>% filter(!is.na(trend)), "Epi. TP (µg/L/y)")
 us_map_hypo_tp_strat <- map_trend(hypo_tp_sen %>% filter(!is.na(trend)), "Hypo. TP (µg/L/y)")
 us_map_epi_tp_strat <- map_trend(epi_tp_sen %>% filter(!is.na(trend)), "Epi. TP (µg/L/y)")
-us_map_epi_chla <- map_trend(epi_tp_sen %>% filter(!is.na(trend)), "Epi. chl-a (µg/L/y)")
+us_map_epi_tp_surf <- map_trend(surf_epi_tp_sen %>% filter(!is.na(trend)), "Surface TP (µg/L/y)")
+us_map_epi_chla <- map_trend(epi_chla_sen %>% filter(!is.na(trend)), "Epi. chl-a (µg/L/y)")
 us_map_af <- map_trend(af_sen %>% filter(!is.na(trend)), "AF (d)")
+us_map_do <- map_trend(hypo_do_sen %>% filter(!is.na(trend)), "Hypo. DO (mg/L/d)")
 
-tp_input_trend_flux %>%
+tp_input_trend_flux_limited %>%
   mutate(var = "TP_flux_area") %>%
   dplyr::select(LakeID, trend, var) %>%
   full_join(epi_tp_sen %>% 
@@ -155,21 +247,30 @@ wi_lakes_all_data <- with_temp %>%
 wi_tp_trend <- wi_tp_withID %>%
   rename(date = sample_dt)
 
-all_trends <- tp_input_trend_conc %>%
+all_lake_trends <- tp_input_trend_conc_limited %>%
   mutate(var = "TP_conc") %>%
-  full_join(tp_input_trend_flux %>% mutate(var = "TP_flux")) %>%
-  full_join(epi_tp_sen %>% mutate(var = "TP_ugL_EPI")) %>%
-  full_join(hypo_tp_sen %>% mutate(var = "TP_ugL_HYPO")) %>%
+  full_join(tp_input_trend_flux_limited %>% mutate(var = "TP_flux")) %>%
+  full_join(epi_tp_sen %>% mutate(var = "strat_TP_ugL_EPI")) %>%
+  full_join(surf_epi_tp_sen %>% mutate(var = "TP_ugL_SURF")) %>%
+  full_join(hypo_tp_sen %>% mutate(var = "strat_TP_ugL_HYPO")) %>%
   full_join(hypo_do_sen %>% mutate(var = "DO_mgL_HYPO")) %>%
   full_join(af_sen %>% mutate(var = "AF")) %>%
   full_join(epi_chla_sen %>% mutate(var = "Chla_ugL_EPI"))
 
+all_lake_trends_pct <- with_temp %>%
+  pivot_longer(c(strat_TP_ugL_EPI, strat_TP_ugL_HYPO, TP_ugL_SURF, DO_mgL_HYPO, AF, Chla_ugL_EPI), names_to = "var") %>%
+  group_by(LakeID, var) %>%
+  summarize(mean = mean(value, na.rm = T),
+            median = median(value, na.rm = T)) %>%
+  left_join(all_lake_trends) %>%
+  mutate(trend = trend / mean * 100)
+
 jpeg("../Figures/All_trends.jpeg", width = 6, height = 6, units = "in", res = 300)
-all_trends %>%
+all_lake_trends %>%
   dplyr::select(LakeID, var, trend) %>%
   pivot_wider(names_from = var, values_from = trend) %>%
   pivot_longer(c(TP_flux, TP_conc), names_to = "input_var", values_to = "input_val") %>%
-  pivot_longer(c(TP_ugL_EPI, TP_ugL_HYPO, Chla_ugL_EPI, DO_mgL_HYPO, AF), names_to = "lake_var", values_to = "lake_val") %>%
+  pivot_longer(c(strat_TP_ugL_EPI, strat_TP_ugL_HYPO, Chla_ugL_EPI, DO_mgL_HYPO, AF), names_to = "lake_var", values_to = "lake_val") %>%
   filter(!is.na(input_val),
          !is.na(lake_val)) %>%
   ggplot(aes(x = input_val, y = lake_val))+
@@ -180,8 +281,149 @@ all_trends %>%
 dev.off()
 ```
 
+Make a figure for AGU to show that inputs are decreasing but concentrations are increasing
+```{r}
+#Calculate max and min to make scale bar consistent
+all_lake_trends_pct_wi <- all_lake_trends_pct %>%
+    left_join(lat_long) %>%
+    filter(StateOrProvince == "Wisconsin")
+comb_trends <- c(all_trends_pct$trend[all_trends_pct$name == "TP_flux_limited_years"],
+                 all_lake_trends_pct_wi$trend[all_lake_trends_pct_wi$var == "strat_TP_ugL_EPI"])
+abs_max <- max(abs(comb_trends), na.rm = T) * 10
 
-Plot correlation between in-lake and input concentrations (i.e., not trends)
+us_map_flux_pct_agu <- map_trend(all_trends_pct %>% 
+                                   filter(name == "TP_flux_limited_years",
+                                          !is.na(trend)), 
+                                 "")+
+  scale_fill_gradientn(name = "Trend (% per decade)",
+                       colours = c("blue","white","red"),
+                       limits = c(-abs_max, abs_max),
+                       n.breaks = 4) +
+  ggtitle("TP input mass")
+
+us_map_epi_tp_strat_pct <- map_trend(all_lake_trends_pct %>% 
+                                   filter(var == "strat_TP_ugL_EPI",
+                                          !is.na(trend)), 
+                                 "")+
+  scale_fill_gradientn(name = "Trend (% per decade)",
+                       colours = c("blue","white","red"),
+                       limits = c(-abs_max, abs_max),
+                       n.breaks = 4) +
+  ggtitle("In-lake surface-water TP")
+
+jpeg("../Figures/TP_inlake_and_input_trends.jpeg", width = 6, height = 4, units = "in", res = 300)
+ggarrange(us_map_flux_pct_agu, us_map_epi_tp_strat_pct, common.legend = TRUE, legend = "bottom")
+dev.off()
+
+all_lake_trends_pct %>% 
+  filter(var == "strat_TP_ugL_EPI",
+         !is.na(trend)) %>%
+  full_join(all_trends_pct %>% 
+              filter(name == "TP_flux_limited_years") %>%
+              rename(var = name)) %>%
+  ggplot(aes(x = trend, color = var)) +
+  geom_density()
+
+all_lake_trends_pct %>% 
+  filter(var == "strat_TP_ugL_EPI") %>%
+  full_join(all_trends_pct %>% 
+              filter(name == "TP_flux_limited_years") %>%
+              rename(var = name)) %>%
+  select(LakeID, var, trend) %>%
+  pivot_wider(names_from = var, values_from = trend) %>%
+  filter(!is.na(TP_flux_limited_years), !is.na(strat_TP_ugL_EPI)) %>%
+  ggplot(aes(x = TP_flux_limited_years, y = strat_TP_ugL_EPI)) +
+  geom_point()
+
+all_lake_trends_pct %>% 
+  filter(var == "strat_TP_ugL_EPI") %>%
+  full_join(all_trends_pct %>% 
+              filter(name == "TP_flux_limited_years") %>%
+              rename(var = name)) %>%
+  select(LakeID, var, trend) %>%
+  pivot_wider(names_from = var, values_from = trend) %>% 
+  left_join(lat_long) %>%
+  filter(StateOrProvince == "Wisconsin")
+
+with_temp %>%
+  filter(LakeID == "31")
+```
+
+Same figure, but using surface concentrations (i.e., including non-stratified lakes)
+```{r}
+#Calculate max and min to make scale bar consistent
+all_lake_trends_pct_wi <- all_lake_trends_pct %>%
+    left_join(lat_long) %>%
+    filter(StateOrProvince == "Wisconsin")
+comb_trends <- c(all_trends_pct$trend[all_trends_pct$name == "TP_flux"],
+                 all_lake_trends_pct_wi$trend[all_lake_trends_pct_wi$var == "TP_ugL_SURF"])
+abs_max <- max(abs(comb_trends), na.rm = T) * 10
+
+us_map_flux_pct_agu <- map_trend(all_trends_pct %>% 
+                                   filter(name == "TP_flux",
+                                          !is.na(trend)), 
+                                 "")+
+  scale_fill_gradientn(name = "Trend (% per decade)",
+                       colours = c("blue","white","red"),
+                       limits = c(-abs_max, abs_max)) +
+  ggtitle("TP input mass")
+
+us_map_epi_tp_strat_pct <- map_trend(all_lake_trends_pct %>% 
+                                   filter(var == "TP_ugL_SURF",
+                                          !is.na(trend)), 
+                                 "")+
+  scale_fill_gradientn(name = "Trend (% per decade)",
+                       colours = c("blue","white","red"),
+                       limits = c(-abs_max, abs_max)) +
+  ggtitle("In-lake surface-water TP")
+
+jpeg("../Figures/TP_inlake_and_input_trends_unstrat.jpeg", width = 6, height = 4, units = "in", res = 300)
+ggarrange(us_map_flux_pct_agu, us_map_epi_tp_strat_pct, common.legend = TRUE, legend = "bottom")
+dev.off()
+
+all_lake_trends_pct %>% 
+  filter(var == "TP_ugL_SURF",
+         !is.na(trend)) %>%
+  full_join(all_trends_pct %>% 
+              filter(name == "TP_flux") %>%
+              rename(var = name)) %>%
+  ggplot(aes(x = trend, color = var)) +
+  geom_density()
+
+all_lake_trends_pct %>% 
+  filter(var == "TP_ugL_SURF") %>%
+  full_join(all_trends_pct %>% 
+              filter(name == "TP_flux") %>%
+              rename(var = name)) %>%
+  select(LakeID, var, trend) %>%
+  pivot_wider(names_from = var, values_from = trend) %>%
+  filter(!is.na(TP_flux), !is.na(TP_ugL_SURF)) %>%
+  ggplot(aes(x = TP_flux, y = TP_ugL_SURF)) +
+  geom_point()
+
+all_lake_trends_pct %>%
+  filter(var == "TP_ugL_SURF") %>%
+  full_join(all_trends_pct %>% 
+              filter(name == "TP_flux")%>%
+              rename(var = name)) %>%
+  select(LakeID, var, trend) %>%
+  pivot_wider(names_from = var, values_from = trend) %>%
+  filter(!is.na(TP_ugL_SURF), !is.na(TP_flux)) %>%
+  left_join(lat_long) %>%
+  ggplot(aes(y = TP_ugL_SURF, x = TP_flux, color = MaximumDepth_m > 6)) +
+  geom_point()
+
+all_lake_trends_pct %>%
+  filter(var == "TP_ugL_SURF") %>%
+  left_join(lat_long) %>%
+  ggplot(aes(y = trend, x = MaximumDepth_m)) +
+  geom_point()+
+  scale_x_log10()
+```
+
+
+Plot correlation between mean in-lake and input concentrations (i.e., not trends)
+Take home: no correlation
 ```{r}
 #Calculate summary stats
 in_lake_sum = with_temp %>%
@@ -228,7 +470,7 @@ summary_stats %>%
 
 
 Monthly inputs correlation
-On average no evidence for an effect of any month of TP input on WI lake concentrations
+Take home: on average no evidence for an effect of any one month of TP input on WI lake concentrations
 ```{r}
 monthly_tp <- wi_tp_withID %>%
   mutate(mon = month(sample_dt),
@@ -275,6 +517,14 @@ wi_lakes_annual <- with_temp %>%
   mutate(nyear = length(unique(Year)))%>%
   filter(nyear>=10)
 
+wi_lakes_annual_surf <- with_temp %>%
+  filter(LakeID %in% annual_tp$LakeID) %>%
+  full_join(annual_tp) %>%
+  filter(!is.na(TP_ugL_SURF)) %>%
+  group_by(LakeID)%>%
+  mutate(nyear = length(unique(Year)))%>%
+  filter(nyear>=10)
+
 jpeg("../Figures/input correlation flux.jpeg", width = 8, height = 8, units = "in", res = 300)
 wi_lakes_annual %>%
   group_by(LakeID)%>%
@@ -285,6 +535,37 @@ wi_lakes_annual %>%
   geom_point()+
   scale_x_continuous(labels = ~ round(.x, 2))+
   facet_wrap(~LakeID, scales = "free")
+dev.off()
+
+jpeg("../Figures/input correlation flux surf.jpeg", width = 8, height = 8, units = "in", res = 300)
+wi_lakes_annual_surf %>%
+  group_by(LakeID)%>%
+  filter(!is.na(TP_ugL_SURF), !is.na(TP_flux))%>%
+  mutate(nyear = length(unique(Year)))%>%
+  filter(nyear>=10) %>%
+  ggplot(aes(x = TP_flux, y = TP_ugL_SURF, color = Year)) +
+  scale_color_viridis_c()+
+  geom_point()+
+  scale_x_continuous(labels = ~ round(.x, 2))+
+  facet_wrap(~LakeName, scales = "free") +
+  theme_bw()
+dev.off()
+
+jpeg("../Figures/input correlation flux surf select.jpeg", width = 5, height = 3, units = "in", res = 300)
+wi_lakes_annual_surf %>%
+  group_by(LakeID)%>%
+  filter(!is.na(TP_ugL_SURF), !is.na(TP_flux))%>%
+  mutate(nyear = length(unique(Year)))%>%
+  filter(nyear>=10,
+         LakeName %in% c("Delavan", "Lac La Belle")) %>%
+  ggplot(aes(x = TP_flux, y = TP_ugL_SURF, color = Year)) +
+  scale_color_viridis_c()+
+  geom_point()+
+  scale_x_continuous(labels = ~ round(.x, 2))+
+  facet_wrap(~LakeName, scales = "free") +
+  theme_bw() +
+  ylab("Surface TP concentration (µg/L)")+
+  xlab("Annual TP input (kg/m2/d)")
 dev.off()
 
 jpeg("../Figures/input correlation conc.jpeg", width = 8, height = 8, units = "in", res = 300)

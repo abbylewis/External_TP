@@ -105,9 +105,9 @@ world_map <- ggplot(data = world) +
   coord_sf(expand = FALSE)+
   geom_point(data = for_map, aes(Longitude_DD, Latitude_DD), fill = "red",shape = 21, color = "white", size = 2, alpha  =.5, stroke = .4)+
   theme_bw()+
-  annotation_north_arrow(location = "bl", which_north = "true", 
-      pad_x = unit(0.75, "in"), pad_y = unit(0.5, "in"),
-      style = north_arrow_fancy_orienteering) +
+  #annotation_north_arrow(location = "bl", which_north = "true", 
+  #    pad_x = unit(0.75, "in"), pad_y = unit(0.5, "in"),
+  #    style = north_arrow_fancy_orienteering) +
   theme(plot.margin = margin(0, 0, 0, 0, "cm"),
     legend.box.background = element_rect(fill = "white", color = "white"))+
   scale_fill_viridis(name = "Years of data")+
@@ -125,9 +125,30 @@ us_map <- ggplot(data = states) +
   coord_sf(expand = FALSE, ylim = c(25, 50), xlim = c(-130,-60))+
   geom_point(data = for_states, aes(Longitude_DD, Latitude_DD), fill = "red",shape = 21, color = "white", size = 2.5, alpha  =.2, stroke = .4)+
   theme_bw()+
-  annotation_north_arrow(location = "bl", which_north = "true", 
-      pad_x = unit(0.2, "in"), pad_y = unit(0.2, "in"),
-      style = north_arrow_fancy_orienteering) +
+  #annotation_north_arrow(location = "bl", which_north = "true", 
+  #    pad_x = unit(0.2, "in"), pad_y = unit(0.2, "in"),
+  #    style = north_arrow_fancy_orienteering) +
+  theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+    legend.box.background = element_rect(fill = "white", color = "white"))+
+  scale_fill_viridis(name = "Years of data")+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+us_map
+dev.off()
+
+jpeg("../Figures/WI Map - just points.jpg", res = 300, width = 3, height = 3, units = "in")
+for_states <- for_map%>%
+  filter(Country == "USA", 
+         StateOrProvince == "Wisconsin")
+states <- ne_states(returnclass = "sf",country = "United States of America")
+us_map <- ggplot(data = states) +
+  geom_sf() +
+  coord_sf(expand = FALSE, ylim = c(42, 47.5), xlim = c(-93,-86.5))+
+  geom_point(data = for_states, aes(Longitude_DD, Latitude_DD), fill = "red",shape = 21, color = "white", size = 2.5, alpha  =.2, stroke = .4)+
+  theme_bw()+
+  #annotation_north_arrow(location = "bl", which_north = "true", 
+  #    pad_x = unit(0.2, "in"), pad_y = unit(0.2, "in"),
+  #    style = north_arrow_fancy_orienteering) +
   theme(plot.margin = margin(0, 0, 0, 0, "cm"),
     legend.box.background = element_rect(fill = "white", color = "white"))+
   scale_fill_viridis(name = "Years of data")+

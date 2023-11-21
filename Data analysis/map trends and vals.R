@@ -42,10 +42,7 @@ map_val <- function(df, name) {
 map_trend <- function(df, name) {
   df <- df %>%
     left_join(lat_long) %>%
-    filter(Latitude_DD > 42, 
-           Latitude_DD < 47.5,
-           Longitude_DD > -93,
-           Longitude_DD < -86.5)
+    filter(StateOrProvince == "Wisconsin")
   min = min(df$trend)*10
   max = max(df$trend)*10
   abs_max = max(abs(c(min,max)))

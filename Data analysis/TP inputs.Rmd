@@ -102,6 +102,20 @@ wi_tp_trend %>%
   theme_bw()
 dev.off()
 
+jpeg("../Figures/TP_input_patterns_focal.jpeg", width = 6, height = 4, units = "in", res = 300)
+wi_tp_trend %>%
+  group_by(LakeID) %>%
+  mutate(z_score = (TP_flux - mean(TP_flux, na.rm = T))/sd(TP_flux, na.rm = T)) %>%
+  ggplot(aes(x = Year, y = z_score))+
+  geom_line(aes(group = LakeID), color = "grey50")+
+  geom_line(data = . %>% filter(LakeID %in% c("WI-683125")), color = "#FF9C61", linewidth = 2) +
+  geom_line(data = . %>% filter(LakeID %in% c("114")), color = "#9E1EA0", linewidth = 2) +
+  theme(legend.position = "none")+
+  ylab("Z-score of TP input at each lake")+
+  xlab("Year")+
+  theme_bw()
+dev.off()
+
 jpeg("../Figures/TP_conc_patterns.jpeg", width = 6, height = 4, units = "in", res = 300)
 with_temp %>%
   group_by(LakeID) %>%
